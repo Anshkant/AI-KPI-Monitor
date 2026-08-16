@@ -1,0 +1,29 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Python Caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environment & Secrets (NEVER PUSH)
+.env
+*.env.local
+
+# SQLite temporary journal/WAL files
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# IDE / OS specific
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+database/sales.db
