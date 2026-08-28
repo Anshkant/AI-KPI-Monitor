@@ -22,7 +22,7 @@ st.set_page_config(
 # API CONFIG
 # ============================================================
 
-API_BASE_URL = "http://127.0.0.1:8000"
+API_BASE_URL = "https://ai-kpi-monitor.onrender.com"
 
 SALES_API = f"{API_BASE_URL}/sales"
 SUMMARY_API = f"{API_BASE_URL}/sales/dashboard-summary"
@@ -30,6 +30,7 @@ FILTER_OPTIONS_API = f"{API_BASE_URL}/sales/filter-options"
 LATEST_API = f"{API_BASE_URL}/sales/latest"
 LATEST_ONE_API = f"{API_BASE_URL}/sales/latest-one"
 ANOMALY_API = f"{API_BASE_URL}/anomalies/latest"
+AI_INSIGHTS_API = f"{API_BASE_URL}/ai/executive-insights"
 
 
 # ============================================================
@@ -382,23 +383,104 @@ st.markdown(
             line-height: 1.4;
         }
 
-        /* Executive AI Insight Box */
-        .insight-card {
-            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-            border: 1px solid #cbd5e1;
-            border-radius: 12px;
-            padding: 16px 20px;
-            margin: 14px 0 20px 0;
-            display: flex;
-            gap: 14px;
-            align-items: flex-start;
+        /* Executive AI Insight Box System */
+        .ai-insights-box {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            padding: 22px 24px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.03);
+            margin: 16px 0 24px 0;
+            position: relative;
         }
 
-        .insight-text {
-            font-size: 0.92rem;
-            line-height: 1.5;
+        .ai-header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .ai-title-wrap {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .ai-badge-alert {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            background: #fff1f2;
+            color: #be123c;
+            border: 1px solid #fecdd3;
+        }
+
+        .ai-badge-growth {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            background: #ecfdf5;
+            color: #047857;
+            border: 1px solid #a7f3d0;
+        }
+
+        .ai-badge-radar {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            background: #eef2ff;
+            color: #4338ca;
+            border: 1px solid #c7d2fe;
+        }
+
+        .ai-narrative-card {
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border-left: 4px solid #4f46e5;
+            border-radius: 8px;
+            padding: 16px 20px;
+            font-size: 0.95rem;
+            line-height: 1.6;
+            color: #1e293b;
+            margin: 12px 0 18px 0;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+        }
+
+        .ai-driver-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 14px 16px;
+            font-size: 0.85rem;
             color: #334155;
-            margin: 0;
+            line-height: 1.5;
+            height: 100%;
+        }
+
+        .ai-action-card {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-left: 4px solid #16a34a;
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 0.86rem;
+            color: #15803d;
+            font-weight: 600;
+            margin-bottom: 8px;
         }
     </style>
     """,
@@ -515,6 +597,28 @@ def get_anomalies(limit=10):
         return payload
     except Exception:
         return {"data": [], "critical": 0, "high": 0, "medium": 0}
+
+
+def get_ai_insights(start_date=None, end_date=None, regions=None, categories=None, channels=None, use_gemini=False):
+    params = {"use_gemini": str(use_gemini).lower()}
+    if start_date:
+        params["start_date"] = str(start_date)
+    if end_date:
+        params["end_date"] = str(end_date)
+    if regions:
+        params["regions"] = ",".join(regions)
+    if categories:
+        params["categories"] = ",".join(categories)
+    if channels:
+        params["channels"] = ",".join(channels)
+
+    try:
+        response = http.get(AI_INSIGHTS_API, params=params, timeout=12)
+        response.raise_for_status()
+        payload = response.json()
+        return payload.get("insights", {})
+    except Exception as err:
+        return None
 
 
 # ============================================================
@@ -1112,46 +1216,107 @@ def live_dashboard():
         st.success("✅ Zero active anomalies detected in current stream window.")
 
     # ========================================================
-    # EXECUTIVE BUSINESS SUMMARY
+    # 🧠 EXECUTIVE AI BUSINESS INSIGHTS (Executive Radar)
     # ========================================================
     st.markdown(
         f"""
         <div class="section-header">
             <span style="display:flex; align-items:center;">{ICONS['sparkles']}</span>
-            <h2 class="section-title">Executive AI Insights</h2>
+            <h2 class="section-title">Executive AI Business Intelligence</h2>
         </div>
         """,
         unsafe_allow_html=True
     )
 
-    if margin >= 20:
-        profitability_text = f"Profit margins remain resilient at <strong>{margin:.1f}%</strong>."
-    elif margin >= 10:
-        profitability_text = f"Profit margins are moderate at <strong>{margin:.1f}%</strong>."
-    else:
-        profitability_text = f"Profit margins are under compression at <strong>{margin:.1f}%</strong>."
+    ai_data = get_ai_insights(
+        start_date=start_date,
+        end_date=end_date if not auto_sync_live else None,
+        regions=selected_regions if len(selected_regions) < len(regions_list) else None,
+        categories=selected_categories if len(selected_categories) < len(categories_list) else None,
+        channels=selected_channels if len(selected_channels) < len(channels_list) else None,
+        use_gemini=False
+    )
 
-    if critical > 0:
-        risk_text = f"<strong>{critical} critical operational alerts</strong> warrant immediate inspection."
-    elif high > 0:
-        risk_text = f"<strong>{high} high-priority anomalies</strong> flagged in real-time stream."
-    else:
-        risk_text = "Operational variance remains well within normal tolerance limits."
+    if ai_data:
+        alert_title = ai_data.get("alert_title", "⚡ Executive Business Intelligence Radar")
+        severity = ai_data.get("severity", "Healthy")
+        exec_summary = ai_data.get("executive_summary", "")
+        drivers = ai_data.get("key_drivers", [])
+        risk_text = ai_data.get("risk_assessment", "")
+        actions = ai_data.get("recommended_actions", [])
 
-    st.markdown(
-        f"""
-        <div class="insight-card">
-            <div style="background:#e0e7ff; color:#4338ca; padding:10px; border-radius:10px; display:flex;">
-                {ICONS['sparkles']}
+        if severity == "Warning":
+            badge_class = "ai-badge-alert"
+        elif severity == "Positive":
+            badge_class = "ai-badge-growth"
+        else:
+            badge_class = "ai-badge-radar"
+
+        st.markdown(
+            f"""
+            <div class="ai-insights-box">
+                <div class="ai-header-row">
+                    <div class="ai-title-wrap">
+                        <span class="{badge_class}">{alert_title}</span>
+                    </div>
+                    <span style="font-size:0.78rem; font-weight:600; color:#64748b;">
+                        ⚡ Real-Time Intelligence & Anomaly Synthesis
+                    </span>
+                </div>
+                <div class="ai-narrative-card">
+                    <strong>Executive Briefing:</strong> {exec_summary}
+                </div>
             </div>
-            <p class="insight-text">
-                Current performance reflects cumulative revenue of <strong>{money(revenue)}</strong> generated across <strong>{orders:,} orders</strong> 
-                from <strong>{customers:,} unique customers</strong>. {profitability_text} {risk_text}
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+            """,
+            unsafe_allow_html=True
+        )
+
+        # 3 Key Business Drivers
+        if drivers:
+            st.markdown("<p style='font-size:0.88rem; font-weight:700; color:#334155; margin:4px 0 8px 0;'>📊 Key Performance Drivers</p>", unsafe_allow_html=True)
+            d_cols = st.columns(len(drivers[:3]))
+            icons_list = [ICONS['chart'], ICONS['pie'], ICONS['activity']]
+            for i, driver_text in enumerate(drivers[:3]):
+                with d_cols[i]:
+                    st.markdown(
+                        f"""
+                        <div class="ai-driver-card">
+                            <div style="margin-bottom:6px;">{icons_list[i % len(icons_list)]}</div>
+                            <div>{driver_text}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+        # Recommended Strategic Actions & Operational Risk
+        st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
+        act_col, risk_col = st.columns([3, 2])
+
+        with act_col:
+            st.markdown("<p style='font-size:0.88rem; font-weight:700; color:#15803d; margin-bottom:6px;'>🎯 Recommended Strategic Actions</p>", unsafe_allow_html=True)
+            for act in actions:
+                st.markdown(
+                    f"""
+                    <div class="ai-action-card">
+                        • {act}
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+        with risk_col:
+            st.markdown("<p style='font-size:0.88rem; font-weight:700; color:#e11d48; margin-bottom:6px;'>🛡️ Operational Risk Radar</p>", unsafe_allow_html=True)
+            st.markdown(
+                f"""
+                <div class="ai-driver-card" style="border-left: 3px solid #e11d48; background:#fff1f2;">
+                    <div style="font-weight:700; color:#9f1239; margin-bottom:4px;">Governance & Integrity:</div>
+                    <div style="color:#881337; font-size:0.84rem;">{risk_text}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+    else:
+        st.info("AI Insights synthesis is synchronizing with live data stream...")
 
     # ========================================================
     # TOP PRODUCTS & LATEST LIVE ORDERS TABLES
