@@ -1,23 +1,13 @@
 from typing import Optional, List
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query
 import sqlite3
 import os
+import sys
 import statistics
 
-
 # ============================================================
-# FASTAPI APP
-# ============================================================
-
-app = FastAPI(
-    title="AI KPI Monitor API",
-    description="Real time sales monitoring API",
-    version="1.0.0"
-)
-
-
-# ============================================================
-# PROJECT PATHS
+# PROJECT PATHS & IMPORTS
 # ============================================================
 
 BASE_DIR = os.path.dirname(
@@ -26,10 +16,77 @@ BASE_DIR = os.path.dirname(
     )
 )
 
-DB_PATH = os.path.join(
-    BASE_DIR,
-    "database",
-    "sales.db"
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+import asyncio
+from database.init_db import ensure_database, is_database_initialized, DB_PATH
+from src.live_data_generator import generate_single_order, get_template_df
+
+# ============================================================
+# LIVE STREAM GENERATOR BACKGROUND WORKER STATE
+# ============================================================
+
+live_stream_state = {
+    "enabled": True,
+    "interval": 3.0,
+    "generated_count": 0,
+    "last_order": None,
+    "task": None
+}
+
+
+async def background_order_generator():
+    """Background async worker that continuously streams live orders directly into sales.db."""
+    print("[Live Stream Worker] Background live order generator started (Production-grade streaming).")
+    try:
+        template_df = get_template_df()
+    except Exception as err:
+        print(f"[Live Stream Worker Warning] Could not load template data: {err}")
+        template_df = None
+
+    while True:
+        try:
+            if live_stream_state["enabled"] and template_df is not None:
+                order = generate_single_order(template_df=template_df)
+                live_stream_state["generated_count"] += 1
+                live_stream_state["last_order"] = order
+        except Exception as e:
+            print(f"[Live Stream Worker Error] {e}", file=sys.stderr)
+
+        await asyncio.sleep(live_stream_state["interval"])
+
+
+# ============================================================
+# FASTAPI LIFESPAN & APP
+# ============================================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 1. Auto-initialize database on application startup if missing
+    print("[API Startup] Verifying database integrity...")
+    ensure_database(verbose=True)
+
+    # 2. Automatically launch background live order streamer
+    worker_task = asyncio.create_task(background_order_generator())
+    live_stream_state["task"] = worker_task
+
+    yield
+
+    # Clean shutdown of generator
+    worker_task.cancel()
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
+    print("[API Shutdown] Background live generator stopped.")
+
+
+app = FastAPI(
+    title="AI KPI Monitor API",
+    description="Real time sales monitoring API",
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 
@@ -38,6 +95,8 @@ DB_PATH = os.path.join(
 # ============================================================
 
 def get_connection():
+    if not is_database_initialized(DB_PATH):
+        ensure_database(verbose=True)
 
     conn = sqlite3.connect(
         DB_PATH,
@@ -902,3 +961,97 @@ def get_anomaly_summary():
     finally:
 
         conn.close()
+
+
+# ============================================================
+# GET AI EXECUTIVE BUSINESS INSIGHTS
+# ============================================================
+
+@app.get("/ai/executive-insights")
+def get_ai_executive_insights(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    regions: Optional[str] = None,
+    categories: Optional[str] = None,
+    channels: Optional[str] = None,
+    use_gemini: bool = False
+):
+    from src.ai_summary import generate_executive_insights
+    import pandas as pd
+
+    conn = get_connection()
+    try:
+        where_sql, params = build_where_clause(start_date, end_date, regions, categories, channels)
+        query = f"""
+            SELECT
+                Order_ID,
+                Order_Date,
+                Customer_ID,
+                Region,
+                Category,
+                Product,
+                Quantity,
+                Revenue,
+                Cost,
+                Profit,
+                Returned,
+                Sales_Channel,
+                Anomaly
+            FROM sales
+            {where_sql}
+            ORDER BY Order_Date ASC
+        """
+        df = pd.read_sql_query(query, conn, params=params)
+        insights = generate_executive_insights(df=df, use_gemini=use_gemini)
+        return {
+            "status": "success",
+            "insights": insights
+        }
+    finally:
+        conn.close()
+
+
+# ============================================================
+# LIVE ORDER GENERATOR MANAGEMENT ENDPOINTS
+# ============================================================
+
+@app.get("/generator/status")
+def get_generator_status():
+    return {
+        "status": "success",
+        "active": live_stream_state["enabled"],
+        "interval_seconds": live_stream_state["interval"],
+        "total_generated": live_stream_state["generated_count"],
+        "last_order": live_stream_state["last_order"]
+    }
+
+
+@app.post("/generator/toggle")
+def toggle_generator(enabled: Optional[bool] = None, interval: Optional[float] = None):
+    if enabled is not None:
+        live_stream_state["enabled"] = enabled
+    if interval is not None and interval >= 0.5:
+        live_stream_state["interval"] = float(interval)
+    return {
+        "status": "success",
+        "active": live_stream_state["enabled"],
+        "interval_seconds": live_stream_state["interval"],
+        "total_generated": live_stream_state["generated_count"]
+    }
+
+
+@app.post("/generator/trigger")
+def trigger_orders(count: int = 1):
+    count = max(1, min(count, 50))
+    template_df = get_template_df()
+    created = []
+    for _ in range(count):
+        order = generate_single_order(template_df=template_df)
+        live_stream_state["generated_count"] += 1
+        live_stream_state["last_order"] = order
+        created.append(order)
+    return {
+        "status": "success",
+        "count": len(created),
+        "orders": created
+    }

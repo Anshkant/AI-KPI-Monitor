@@ -8,57 +8,60 @@ from datetime import datetime
 
 # Project root
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
-# Database
-DB_PATH = os.path.join(BASE_DIR, "database", "sales.db")
+# Fix Windows console UTF-8 output encoding
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
-# Original dataset
-CSV_PATH = os.path.join(
-    BASE_DIR,
-    "data",
-    "processed",
-    "anomaly_sales_data.csv"
-)
+from database.init_db import ensure_database, find_source_data, is_database_initialized, DB_PATH
 
-# Load existing sales data as templates
-if not os.path.exists(CSV_PATH):
-    # Fallback to clean_sales_data if anomaly_sales_data not found
-    CSV_PATH = os.path.join(BASE_DIR, "data", "processed", "clean_sales_data.csv")
+_cached_template_df = None
 
-df = pd.read_csv(CSV_PATH)
 
-# Convert date
-if "Order_Date" in df.columns:
-    df["Order_Date"] = pd.to_datetime(df["Order_Date"], errors="coerce")
+def get_template_df():
+    """Loads and caches seed dataset as templates for generating realistic live orders."""
+    global _cached_template_df
+    if _cached_template_df is None:
+        source_file = find_source_data()
+        df = pd.read_csv(source_file)
+        if "Order_Date" in df.columns:
+            df["Order_Date"] = pd.to_datetime(df["Order_Date"], errors="coerce")
+        _cached_template_df = df
+    return _cached_template_df
 
-def get_connection():
+
+def get_db_connection():
+    """Returns an active SQLite WAL-mode connection."""
+    if not is_database_initialized(DB_PATH):
+        ensure_database(verbose=False)
     conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA busy_timeout=5000;")
     return conn
 
-# Ensure WAL mode is active on database
-try:
-    init_conn = get_connection()
-    init_conn.close()
-except Exception as e:
-    print(f"Initial DB check warning: {e}")
 
-print("=" * 60)
-print("AI KPI MONITOR - LIVE DATA GENERATOR (OPTIMIZED)")
-print("=" * 60)
-print("Database:", DB_PATH)
-print("Status: LIVE STREAMING")
-print("=" * 60)
+def generate_single_order(conn=None, template_df=None) -> dict:
+    """
+    Generates and inserts a single realistic live sales order directly into sales.db.
+    Returns the created order as a dictionary.
+    """
+    if template_df is None:
+        template_df = get_template_df()
 
-interval = 3  # Generate new order every 3-5 seconds
+    should_close_conn = False
+    if conn is None:
+        conn = get_db_connection()
+        should_close_conn = True
 
-while True:
     try:
         # Select random existing order as template
-        new_order = df.sample(1).iloc[0].copy()
-
-        conn = get_connection()
+        new_order = template_df.sample(1).iloc[0].copy()
 
         # Generate new Order ID
         try:
@@ -66,20 +69,20 @@ while True:
             cursor.execute("SELECT COALESCE(MAX(Order_ID), 100000) FROM sales")
             max_order_id = cursor.fetchone()[0]
             new_order["Order_ID"] = int(max_order_id) + 1
-        except Exception as err:
+        except Exception:
             new_order["Order_ID"] = int(time.time())
 
-        # Current date/time
+        # Current timestamp
         new_order["Order_Date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Generate realistic quantity
+        # Realistic quantity
         new_order["Quantity"] = random.randint(1, 10)
 
         # Realistic revenue & discounts
         unit_price = float(new_order.get("Unit_Price", random.randint(500, 25000)))
         discount = float(new_order.get("Discount", random.choice([0.0, 0.05, 0.1, 0.15, 0.2])))
 
-        # 5% chance of unusual price/quantity anomaly for live detection
+        # 8% chance of anomaly for live detection radar
         is_anomaly = random.random() < 0.08
         if is_anomaly:
             anomaly_type = random.choice(["huge_qty", "heavy_discount", "high_rev", "negative"])
@@ -116,18 +119,49 @@ while True:
         query = f"INSERT INTO sales ({col_names}) VALUES ({placeholders})"
         conn.execute(query, [new_order[col] for col in columns])
         conn.commit()
-        conn.close()
 
-        anomaly_tag = " 🚨 [ANOMALY]" if new_order.get("Anomaly") == "Anomaly" else ""
-        print(
-            f"[LIVE] Order #{new_order['Order_ID']} | "
-            f"Revenue: ₹{new_order['Revenue']:,.2f} | "
-            f"Product: {new_order.get('Product', 'N/A')} | "
-            f"Time: {new_order['Order_Date']}{anomaly_tag}",
-            flush=True
-        )
+        return new_order.to_dict()
 
-    except Exception as e:
-        print(f"[ERROR] Live generator error: {e}", file=sys.stderr, flush=True)
+    finally:
+        if should_close_conn:
+            conn.close()
 
-    time.sleep(interval)
+
+def run_live_stream_loop(interval: float = 3.0):
+    """Continuous stream loop for standalone CLI execution."""
+    ensure_database(verbose=True)
+    print("=" * 60)
+    print("AI KPI MONITOR - LIVE DATA GENERATOR (OPTIMIZED)")
+    print("=" * 60)
+    print("Database:", DB_PATH)
+    print("Status: LIVE STREAMING")
+    print(f"Interval: {interval}s")
+    print("=" * 60)
+
+    template_df = get_template_df()
+
+    while True:
+        try:
+            order = generate_single_order(template_df=template_df)
+            anomaly_tag = " [ANOMALY]" if order.get("Anomaly") == "Anomaly" else ""
+            print(
+                f"[LIVE] Order #{order['Order_ID']} | "
+                f"Revenue: Rs. {order['Revenue']:,.2f} | "
+                f"Product: {order.get('Product', 'N/A')} | "
+                f"Time: {order['Order_Date']}{anomaly_tag}",
+                flush=True
+            )
+        except Exception as e:
+            print(f"[ERROR] Live generator error: {e}", file=sys.stderr, flush=True)
+
+        time.sleep(interval)
+
+
+if __name__ == "__main__":
+    interval_val = 3.0
+    if len(sys.argv) > 1:
+        try:
+            interval_val = float(sys.argv[1])
+        except ValueError:
+            pass
+    run_live_stream_loop(interval=interval_val)

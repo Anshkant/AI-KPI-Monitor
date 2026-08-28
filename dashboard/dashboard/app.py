@@ -3,11 +3,12 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import requests
+import os
+import sys
 from datetime import date, datetime, timedelta
 
-
 # ============================================================
-# PAGE CONFIG
+# PAGE CONFIGURATION
 # ============================================================
 
 st.set_page_config(
@@ -19,10 +20,16 @@ st.set_page_config(
 
 
 # ============================================================
-# API CONFIG
+# API CONFIGURATION
 # ============================================================
 
-API_BASE_URL = "https://ai-kpi-monitor.onrender.com"
+# Auto-detect local vs deployed URL
+DEFAULT_API_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+
+if "api_url" not in st.session_state:
+    st.session_state["api_url"] = DEFAULT_API_URL
+
+API_BASE_URL = st.session_state["api_url"].rstrip("/")
 
 SALES_API = f"{API_BASE_URL}/sales"
 SUMMARY_API = f"{API_BASE_URL}/sales/dashboard-summary"
@@ -31,6 +38,8 @@ LATEST_API = f"{API_BASE_URL}/sales/latest"
 LATEST_ONE_API = f"{API_BASE_URL}/sales/latest-one"
 ANOMALY_API = f"{API_BASE_URL}/anomalies/latest"
 AI_INSIGHTS_API = f"{API_BASE_URL}/ai/executive-insights"
+TRIGGER_API = f"{API_BASE_URL}/generator/trigger"
+GENERATOR_STATUS_API = f"{API_BASE_URL}/generator/status"
 
 
 # ============================================================
@@ -54,12 +63,11 @@ ICONS = {
     "layers": """<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4F46E5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>""",
     "chart": """<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>""",
     "pie": """<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0284C7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path></svg>""",
-    "bell": """<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>""",
 }
 
 
 # ============================================================
-# PREMIUM CSS DESIGN SYSTEM
+# MODERN ENTERPRISE CSS STYLES
 # ============================================================
 
 st.markdown(
@@ -161,22 +169,17 @@ st.markdown(
             border-radius: 12px;
             padding: 16px 20px;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.02);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            transition: all 0.25s ease;
             position: relative;
             overflow: hidden;
             margin-bottom: 12px;
-        }
-
-        .kpi-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
         }
 
         .kpi-top-row {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
         }
 
         .kpi-label {
@@ -219,19 +222,19 @@ st.markdown(
             background: #f8fafc;
             border: 1px solid #e2e8f0;
             border-radius: 10px;
-            padding: 14px 18px;
+            padding: 12px 16px;
             display: flex;
             align-items: center;
-            gap: 14px;
-            margin-bottom: 12px;
+            gap: 12px;
+            margin-bottom: 10px;
         }
 
         .sys-icon-box {
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 40px;
-            height: 40px;
+            width: 38px;
+            height: 38px;
             border-radius: 10px;
             background: #ffffff;
             border: 1px solid #e2e8f0;
@@ -239,7 +242,7 @@ st.markdown(
         }
 
         .sys-label {
-            font-size: 0.78rem;
+            font-size: 0.76rem;
             font-weight: 600;
             color: #64748b;
             text-transform: uppercase;
@@ -248,7 +251,7 @@ st.markdown(
         }
 
         .sys-val {
-            font-size: 1.15rem;
+            font-size: 1.1rem;
             font-weight: 700;
             color: #0f172a;
         }
@@ -263,7 +266,7 @@ st.markdown(
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin: 12px 0 20px 0;
+            margin: 10px 0 16px 0;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
         }
 
@@ -315,12 +318,12 @@ st.markdown(
         .alert-card {
             background: #ffffff;
             border-radius: 10px;
-            padding: 14px 18px;
-            margin-bottom: 10px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 4px;
         }
 
         .alert-critical {
@@ -378,7 +381,7 @@ st.markdown(
         }
 
         .alert-msg {
-            font-size: 0.86rem;
+            font-size: 0.84rem;
             color: #334155;
             line-height: 1.4;
         }
@@ -388,9 +391,9 @@ st.markdown(
             background: #ffffff;
             border: 1px solid #e2e8f0;
             border-radius: 14px;
-            padding: 22px 24px;
+            padding: 20px 24px;
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.03);
-            margin: 16px 0 24px 0;
+            margin: 12px 0 20px 0;
             position: relative;
         }
 
@@ -398,8 +401,8 @@ st.markdown(
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 12px;
-            padding-bottom: 10px;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
             border-bottom: 1px solid #f1f5f9;
         }
 
@@ -452,11 +455,11 @@ st.markdown(
             background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
             border-left: 4px solid #4f46e5;
             border-radius: 8px;
-            padding: 16px 20px;
-            font-size: 0.95rem;
+            padding: 14px 18px;
+            font-size: 0.94rem;
             line-height: 1.6;
             color: #1e293b;
-            margin: 12px 0 18px 0;
+            margin: 10px 0 16px 0;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
         }
 
@@ -464,10 +467,10 @@ st.markdown(
             background: #f8fafc;
             border: 1px solid #e2e8f0;
             border-radius: 10px;
-            padding: 14px 16px;
-            font-size: 0.85rem;
+            padding: 12px 14px;
+            font-size: 0.84rem;
             color: #334155;
-            line-height: 1.5;
+            line-height: 1.45;
             height: 100%;
         }
 
@@ -476,11 +479,11 @@ st.markdown(
             border: 1px solid #bbf7d0;
             border-left: 4px solid #16a34a;
             border-radius: 8px;
-            padding: 10px 14px;
-            font-size: 0.86rem;
+            padding: 8px 12px;
+            font-size: 0.84rem;
             color: #15803d;
             font-weight: 600;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }
     </style>
     """,
@@ -529,7 +532,7 @@ def prepare_dataframe(data):
 
 
 # ============================================================
-# API FUNCTIONS
+# API CALL HELPERS
 # ============================================================
 
 def get_filter_options():
@@ -569,7 +572,7 @@ def get_dashboard_summary(start_date=None, end_date=None, regions=None, categori
         return None
 
 
-def get_latest_orders(limit=15):
+def get_latest_orders(limit=10):
     try:
         response = http.get(LATEST_API, params={"limit": limit}, timeout=4)
         response.raise_for_status()
@@ -613,11 +616,20 @@ def get_ai_insights(start_date=None, end_date=None, regions=None, categories=Non
         params["channels"] = ",".join(channels)
 
     try:
-        response = http.get(AI_INSIGHTS_API, params=params, timeout=12)
+        response = http.get(AI_INSIGHTS_API, params=params, timeout=10)
         response.raise_for_status()
         payload = response.json()
         return payload.get("insights", {})
-    except Exception as err:
+    except Exception:
+        return None
+
+
+def trigger_live_order_api(count=1):
+    try:
+        response = http.post(f"{TRIGGER_API}?count={count}", timeout=4)
+        response.raise_for_status()
+        return response.json()
+    except Exception:
         return None
 
 
@@ -679,6 +691,12 @@ with st.sidebar:
         help="Continuously incorporate newest incoming live orders into real-time metrics"
     )
 
+    # Interactive Demo Feature for Recruiters
+    if st.button("⚡ Inject Test Live Order", help="Generates an immediate order directly into the database to demo live sync"):
+        res = trigger_live_order_api(count=1)
+        if res and res.get("status") == "success":
+            st.toast("⚡ Live Order injected! Watch KPIs and ticker update.", icon="🚀")
+
     st.divider()
 
     st.markdown(f"**{ICONS['calendar']} Reporting Period**", unsafe_allow_html=True)
@@ -697,7 +715,7 @@ with st.sidebar:
         start_date = min_date_val
         end_date = max_date_val
 
-    # Filters
+    # Multi-select Segment Filters
     selected_regions = st.multiselect("Regions", regions_list, default=regions_list)
     selected_categories = st.multiselect("Categories", categories_list, default=categories_list)
     selected_channels = st.multiselect("Channels", channels_list, default=channels_list)
@@ -710,7 +728,7 @@ with st.sidebar:
                 <span>Engine:</span> <strong style="color:#0f172a;">FastAPI + SQLite WAL</strong>
             </div>
             <div style="display:flex; justify-content:space-between;">
-                <span>Latency:</span> <strong style="color:#10b981;">~8ms Pre-aggregated</strong>
+                <span>Stream:</span> <strong style="color:#10b981;">Auto-Ingestion Active</strong>
             </div>
         </div>
         """,
@@ -718,31 +736,54 @@ with st.sidebar:
     )
 
 
+# Common filter parameters
+filter_kwargs = {
+    "start_date": start_date,
+    "end_date": None if auto_sync_live else end_date,
+    "regions": selected_regions if len(selected_regions) < len(regions_list) else None,
+    "categories": selected_categories if len(selected_categories) < len(categories_list) else None,
+    "channels": selected_channels if len(selected_channels) < len(channels_list) else None,
+}
+
+
 # ============================================================
-# LIVE DASHBOARD FRAGMENT (Instant & Smooth UI Updates)
+# PERSISTENT BRAND HEADER (Rendered Once, No Flicker)
 # ============================================================
 
-@st.fragment(
-    run_every=(
-        refresh_speed
-        if live_monitoring
-        else None
-    )
+st.markdown(
+    f"""
+    <div class="brand-container">
+        <div class="brand-title-wrap">
+            <div class="brand-logo-badge">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="20" x2="18" y2="10"></line>
+                    <line x1="12" y1="20" x2="12" y2="4"></line>
+                    <line x1="6" y1="20" x2="6" y2="14"></line>
+                </svg>
+            </div>
+            <div>
+                <h1 class="brand-title">AI KPI Monitor</h1>
+                <p class="brand-subtitle">Executive Sales Intelligence & Real-Time Operational Risk Radar</p>
+            </div>
+        </div>
+        <div>
+            {f'<div class="live-status-pill"><div class="live-pulse-dot"></div><span>LIVE STREAM • {refresh_speed}s</span></div>' if live_monitoring else '<div class="live-status-pill" style="background:#f1f5f9; color:#475569; border-color:#cbd5e1;"><span>PAUSED</span></div>'}
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
 )
-def live_dashboard():
-    effective_end_date = None if auto_sync_live else end_date
 
-    # Fast sub-10ms aggregated fetch
-    summary = get_dashboard_summary(
-        start_date=start_date,
-        end_date=effective_end_date,
-        regions=selected_regions if len(selected_regions) < len(regions_list) else None,
-        categories=selected_categories if len(selected_categories) < len(categories_list) else None,
-        channels=selected_channels if len(selected_channels) < len(channels_list) else None,
-    )
 
+# ============================================================
+# 1. LIVE EXECUTIVE KPIs & TICKER FRAGMENT (Updates every 2-3s smoothly)
+# ============================================================
+
+@st.fragment(run_every=refresh_speed if live_monitoring else None)
+def render_live_kpi_section():
+    summary = get_dashboard_summary(**filter_kwargs)
     if not summary or summary.get("status") != "success":
-        st.warning("⚠️ Connecting to backend API stream...")
+        st.warning("⚠️ Synchronizing with backend API stream...")
         return
 
     kpis = summary.get("kpis", {})
@@ -754,38 +795,8 @@ def live_dashboard():
     profit = kpis.get("profit", 0.0)
     margin = kpis.get("profit_margin", 0.0)
 
-    # ========================================================
-    # BRAND HEADER
-    # ========================================================
-    st.markdown(
-        f"""
-        <div class="brand-container">
-            <div class="brand-title-wrap">
-                <div class="brand-logo-badge">
-                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="18" y1="20" x2="18" y2="10"></line>
-                        <line x1="12" y1="20" x2="12" y2="4"></line>
-                        <line x1="6" y1="20" x2="6" y2="14"></line>
-                    </svg>
-                </div>
-                <div>
-                    <h1 class="brand-title">AI KPI Monitor</h1>
-                    <p class="brand-subtitle">Executive Sales Intelligence & Real-Time Operational Risk Radar</p>
-                </div>
-            </div>
-            <div>
-                {f'<div class="live-status-pill"><div class="live-pulse-dot"></div><span>LIVE STREAM • {refresh_speed}s</span></div>' if live_monitoring else '<div class="live-status-pill" style="background:#f1f5f9; color:#475569; border-color:#cbd5e1;"><span>PAUSED</span></div>'}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    # ========================================================
-    # SYSTEM OVERVIEW CARDS
-    # ========================================================
+    # Overview row
     s1, s2, s3 = st.columns(3)
-
     with s1:
         st.markdown(
             f"""
@@ -822,28 +833,15 @@ def live_dashboard():
                 <div class="sys-icon-box">{ICONS['calendar']}</div>
                 <div>
                     <div class="sys-label">Reporting Window</div>
-                    <div class="sys-val" style="font-size:0.98rem;">{period_str}</div>
+                    <div class="sys-val" style="font-size:0.96rem;">{period_str}</div>
                 </div>
             </div>
             """,
             unsafe_allow_html=True
         )
 
-    # ========================================================
-    # EXECUTIVE KPIs (Custom Enterprise Metric Cards)
-    # ========================================================
-    st.markdown(
-        f"""
-        <div class="section-header">
-            <span style="display:flex; align-items:center;">{ICONS['activity']}</span>
-            <h2 class="section-title">Executive Performance KPIs</h2>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
+    # 6 Executive KPI Metric Cards
     k1, k2, k3 = st.columns(3)
-
     with k1:
         st.markdown(
             f"""
@@ -896,7 +894,6 @@ def live_dashboard():
         )
 
     k4, k5, k6 = st.columns(3)
-
     with k4:
         st.markdown(
             f"""
@@ -948,9 +945,7 @@ def live_dashboard():
             unsafe_allow_html=True
         )
 
-    # ========================================================
-    # LATEST TRANSACTION TICKER RIBBON
-    # ========================================================
+    # Live Transaction Ribbon Ticker
     latest = get_latest_order()
     if latest:
         latest_id = latest.get("Order_ID", "N/A")
@@ -980,9 +975,20 @@ def live_dashboard():
             unsafe_allow_html=True
         )
 
-    # ========================================================
-    # PERFORMANCE OVERVIEW CHARTS
-    # ========================================================
+
+render_live_kpi_section()
+
+
+# ============================================================
+# 2. PERFORMANCE TRAJECTORY & MARKET CHARTS FRAGMENT (15s cadence, No flicker)
+# ============================================================
+
+@st.fragment(run_every=15 if live_monitoring else None)
+def render_charts_section():
+    summary = get_dashboard_summary(**filter_kwargs)
+    if not summary:
+        return
+
     st.markdown(
         f"""
         <div class="section-header">
@@ -994,10 +1000,8 @@ def live_dashboard():
     )
 
     monthly_data = pd.DataFrame(summary.get("monthly_trend", []))
-
     if not monthly_data.empty:
         chart1, chart2 = st.columns(2)
-
         with chart1:
             fig_rev = px.line(
                 monthly_data,
@@ -1010,12 +1014,12 @@ def live_dashboard():
             fig_rev.update_layout(
                 template="plotly_white",
                 margin=dict(l=10, r=10, t=36, b=10),
-                height=290,
+                height=280,
                 xaxis=dict(showgrid=False),
                 yaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
                 font=dict(family="Plus Jakarta Sans, sans-serif")
             )
-            st.plotly_chart(fig_rev, use_container_width=True, key="live_revenue_chart")
+            st.plotly_chart(fig_rev, use_container_width=True, key="live_rev_line_chart")
 
         with chart2:
             fig_prof = px.bar(
@@ -1028,16 +1032,14 @@ def live_dashboard():
             fig_prof.update_layout(
                 template="plotly_white",
                 margin=dict(l=10, r=10, t=36, b=10),
-                height=290,
+                height=280,
                 xaxis=dict(showgrid=False),
                 yaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
                 font=dict(family="Plus Jakarta Sans, sans-serif")
             )
-            st.plotly_chart(fig_prof, use_container_width=True, key="live_profit_chart")
+            st.plotly_chart(fig_prof, use_container_width=True, key="live_prof_bar_chart")
 
-    # ========================================================
-    # BUSINESS BREAKDOWNS
-    # ========================================================
+    # Territory & Channel Breakdown
     st.markdown(
         f"""
         <div class="section-header">
@@ -1049,7 +1051,6 @@ def live_dashboard():
     )
 
     b1, b2 = st.columns(2)
-
     region_data = pd.DataFrame(summary.get("region_breakdown", []))
     category_data = pd.DataFrame(summary.get("category_breakdown", []))
     channel_data = pd.DataFrame(summary.get("channel_breakdown", []))
@@ -1067,12 +1068,12 @@ def live_dashboard():
             fig_region.update_layout(
                 template="plotly_white",
                 margin=dict(l=10, r=10, t=36, b=10),
-                height=280,
+                height=270,
                 xaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
                 yaxis=dict(autorange="reversed"),
                 font=dict(family="Plus Jakarta Sans, sans-serif")
             )
-            st.plotly_chart(fig_region, use_container_width=True, key="live_region_chart")
+            st.plotly_chart(fig_region, use_container_width=True, key="live_region_bar")
 
     with b2:
         if not category_data.empty:
@@ -1087,12 +1088,12 @@ def live_dashboard():
             fig_cat.update_layout(
                 template="plotly_white",
                 margin=dict(l=10, r=10, t=36, b=10),
-                height=280,
+                height=270,
                 xaxis=dict(showgrid=True, gridcolor="#f1f5f9"),
                 yaxis=dict(autorange="reversed"),
                 font=dict(family="Plus Jakarta Sans, sans-serif")
             )
-            st.plotly_chart(fig_cat, use_container_width=True, key="live_category_chart")
+            st.plotly_chart(fig_cat, use_container_width=True, key="live_category_bar")
 
     if not channel_data.empty:
         fig_chan = px.pie(
@@ -1106,14 +1107,21 @@ def live_dashboard():
         fig_chan.update_layout(
             template="plotly_white",
             margin=dict(l=10, r=10, t=36, b=10),
-            height=260,
+            height=250,
             font=dict(family="Plus Jakarta Sans, sans-serif")
         )
-        st.plotly_chart(fig_chan, use_container_width=True, key="live_channel_chart")
+        st.plotly_chart(fig_chan, use_container_width=True, key="live_channel_donut")
 
-    # ========================================================
-    # OPERATIONAL RISK COMMAND CENTER
-    # ========================================================
+
+render_charts_section()
+
+
+# ============================================================
+# 3. OPERATIONAL RISK & ANOMALY RADAR FRAGMENT (Updates in real-time)
+# ============================================================
+
+@st.fragment(run_every=refresh_speed if live_monitoring else None)
+def render_risk_radar_section():
     st.markdown(
         f"""
         <div class="section-header">
@@ -1132,7 +1140,6 @@ def live_dashboard():
     active_alerts = len(anomalies_list)
 
     a1, a2, a3, a4 = st.columns(4)
-
     with a1:
         st.markdown(
             f"""
@@ -1178,7 +1185,7 @@ def live_dashboard():
         )
 
     if anomalies_list:
-        st.markdown("<p style='font-size:0.86rem; font-weight:600; color:#475569; margin:10px 0 6px 0;'>Live Detected Anomaly Feed</p>", unsafe_allow_html=True)
+        st.markdown("<p style='font-size:0.86rem; font-weight:600; color:#475569; margin:6px 0 6px 0;'>Live Detected Anomaly Stream</p>", unsafe_allow_html=True)
         for item in anomalies_list[:4]:
             sev = str(item.get("Severity", "Medium")).upper()
             order_id = item.get("Order_ID", "N/A")
@@ -1215,9 +1222,16 @@ def live_dashboard():
     else:
         st.success("✅ Zero active anomalies detected in current stream window.")
 
-    # ========================================================
-    # 🧠 EXECUTIVE AI BUSINESS INSIGHTS (Executive Radar)
-    # ========================================================
+
+render_risk_radar_section()
+
+
+# ============================================================
+# 4. 🧠 EXECUTIVE AI BUSINESS INSIGHTS FRAGMENT (20s cycle)
+# ============================================================
+
+@st.fragment(run_every=20 if live_monitoring else None)
+def render_executive_insights_section():
     st.markdown(
         f"""
         <div class="section-header">
@@ -1228,15 +1242,7 @@ def live_dashboard():
         unsafe_allow_html=True
     )
 
-    ai_data = get_ai_insights(
-        start_date=start_date,
-        end_date=end_date if not auto_sync_live else None,
-        regions=selected_regions if len(selected_regions) < len(regions_list) else None,
-        categories=selected_categories if len(selected_categories) < len(categories_list) else None,
-        channels=selected_channels if len(selected_channels) < len(channels_list) else None,
-        use_gemini=False
-    )
-
+    ai_data = get_ai_insights(**filter_kwargs)
     if ai_data:
         alert_title = ai_data.get("alert_title", "⚡ Executive Business Intelligence Radar")
         severity = ai_data.get("severity", "Healthy")
@@ -1289,7 +1295,7 @@ def live_dashboard():
                     )
 
         # Recommended Strategic Actions & Operational Risk
-        st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='margin-top:12px;'></div>", unsafe_allow_html=True)
         act_col, risk_col = st.columns([3, 2])
 
         with act_col:
@@ -1318,9 +1324,16 @@ def live_dashboard():
     else:
         st.info("AI Insights synthesis is synchronizing with live data stream...")
 
-    # ========================================================
-    # TOP PRODUCTS & LATEST LIVE ORDERS TABLES
-    # ========================================================
+
+render_executive_insights_section()
+
+
+# ============================================================
+# 5. TOP PRODUCTS & LIVE INGESTION TABLES FRAGMENT (Real-time update)
+# ============================================================
+
+@st.fragment(run_every=refresh_speed if live_monitoring else None)
+def render_tables_section():
     t1, t2 = st.columns([1, 2])
 
     with t1:
@@ -1333,7 +1346,8 @@ def live_dashboard():
             """,
             unsafe_allow_html=True
         )
-        top_products_data = summary.get("top_products", [])
+        summary = get_dashboard_summary(**filter_kwargs)
+        top_products_data = summary.get("top_products", []) if summary else []
         if top_products_data:
             top_df = pd.DataFrame(top_products_data)
             if "Revenue" in top_df.columns:
@@ -1366,24 +1380,22 @@ def live_dashboard():
 
             st.dataframe(display_df, use_container_width=True, hide_index=True, height=280)
 
-    # ========================================================
-    # FOOTER
-    # ========================================================
-    st.divider()
-    st.markdown(
-        f"""
-        <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.78rem; color:#94a3b8;">
-            <span>AI KPI Monitor • Executive Sales Intelligence</span>
-            <span>Last Synchronized: <strong>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</strong></span>
-            <span>Polling Cycle: <strong>{refresh_speed}s</strong></span>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+
+render_tables_section()
 
 
 # ============================================================
-# RUN DASHBOARD
+# PERSISTENT FOOTER
 # ============================================================
 
-live_dashboard()
+st.divider()
+st.markdown(
+    f"""
+    <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.78rem; color:#94a3b8;">
+        <span>AI KPI Monitor • Executive Sales Intelligence</span>
+        <span>Last Synchronized: <strong>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</strong></span>
+        <span>Polling Cadence: <strong>{refresh_speed}s</strong></span>
+    </div>
+    """,
+    unsafe_allow_html=True
+)

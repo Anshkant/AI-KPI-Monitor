@@ -8,15 +8,22 @@ An enterprise-grade, real-time KPI monitoring and anomaly detection dashboard po
 
 ## 🚀 Quick Start
 
-### 1. Launch Everything (One-Click)
-Run the launcher script in root:
+### 1. Launch Everything (One-Click / Unified)
+On Windows:
 ```cmd
 start_all.bat
 ```
 
+Or cross-platform (Windows / Linux / macOS / Docker / Cloud):
+```bash
+python run.py
+```
+
+> **Note on Database**: `database/sales.db` is auto-initialized on first run from compressed seed data (`data/processed/anomaly_sales_data.csv.gz`). There is no need to manually create the database upon cloning or deployment.
+
 ### 2. Manual Startup
 ```powershell
-# Terminal 1 - FastAPI Backend
+# Terminal 1 - FastAPI Backend (Auto-initializes DB if missing)
 .\venv\Scripts\activate
 uvicorn api.main:app --reload --port 8000
 
