@@ -82,8 +82,8 @@ def generate_single_order(conn=None, template_df=None) -> dict:
         unit_price = float(new_order.get("Unit_Price", random.randint(500, 25000)))
         discount = float(new_order.get("Discount", random.choice([0.0, 0.05, 0.1, 0.15, 0.2])))
 
-        # 8% chance of anomaly for live detection radar
-        is_anomaly = random.random() < 0.08
+        # 20% chance of anomaly for live detection radar
+        is_anomaly = random.random() < 0.20
         if is_anomaly:
             anomaly_type = random.choice(["huge_qty", "heavy_discount", "high_rev", "negative"])
             if anomaly_type == "huge_qty":
@@ -92,6 +92,8 @@ def generate_single_order(conn=None, template_df=None) -> dict:
                 discount = 0.65
             elif anomaly_type == "high_rev":
                 unit_price = unit_price * random.uniform(4.0, 8.0)
+            elif anomaly_type == "negative":
+                unit_price = -abs(unit_price)
             new_order["Anomaly"] = "Anomaly"
         else:
             new_order["Anomaly"] = "Normal"
