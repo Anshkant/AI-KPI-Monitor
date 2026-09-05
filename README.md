@@ -65,19 +65,6 @@ AI KPI Monitor addresses this by creating a **live sales monitoring pipeline**:
 
 
 
-## ✨ Key Features
-
-- 📊 Real-time executive sales KPI monitoring
-- ⚡ Live transaction generation every few seconds
-- 🚨 Real-time anomaly detection and risk radar
-- 📈 Revenue, profit, margin and order-value tracking
-- 👥 Active customer and transaction monitoring
-- 🌍 Region, category and sales-channel analysis
-- 🔌 FastAPI REST API integration
-- 🗄️ SQLite database with indexed queries
-- 🔄 Auto-refreshing Streamlit dashboard
-- 🤖 AI-driven business intelligence insights
-- 🧪 Test live-order injection for demonstration
 
 
 
