@@ -75,37 +75,45 @@ def generate_single_order(conn=None, template_df=None) -> dict:
         # Current timestamp
         new_order["Order_Date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Realistic quantity
-        new_order["Quantity"] = random.randint(1, 10)
-
-        # Realistic revenue & discounts
-        unit_price = float(new_order.get("Unit_Price", random.randint(500, 25000)))
-        discount = float(new_order.get("Discount", random.choice([0.0, 0.05, 0.1, 0.15, 0.2])))
+        # Realistic baseline parameters
+        quantity = random.randint(1, 10)
+        unit_price = float(random.randint(500, 25000))
+        discount_pct = float(random.choice([0, 5, 10, 15, 20]))
 
         # 20% chance of anomaly for live detection radar
         is_anomaly = random.random() < 0.20
         if is_anomaly:
             anomaly_type = random.choice(["huge_qty", "heavy_discount", "high_rev", "negative"])
             if anomaly_type == "huge_qty":
-                new_order["Quantity"] = random.randint(25, 60)
+                quantity = random.randint(35, 75)
+                discount_pct = 5.0
             elif anomaly_type == "heavy_discount":
-                discount = 0.65
+                discount_pct = 70.0
             elif anomaly_type == "high_rev":
                 unit_price = unit_price * random.uniform(4.0, 8.0)
             elif anomaly_type == "negative":
                 unit_price = -abs(unit_price)
+
             new_order["Anomaly"] = "Anomaly"
         else:
             new_order["Anomaly"] = "Normal"
 
-        new_order["Unit_Price"] = unit_price
-        new_order["Discount"] = discount
-        new_order["Revenue"] = round(new_order["Quantity"] * unit_price * (1 - discount), 2)
+        new_order["Quantity"] = quantity
+        new_order["Unit_Price"] = round(unit_price, 2)
+        new_order["Discount"] = discount_pct
+
+        # Calculate Revenue: Quantity * Unit_Price * (1 - discount_pct/100)
+        revenue = quantity * unit_price * (1.0 - (discount_pct / 100.0))
+        if is_anomaly and anomaly_type == "negative" and revenue >= 0:
+            revenue = -abs(revenue) if revenue != 0 else -5000.0
+
+        new_order["Revenue"] = round(revenue, 2)
 
         # Recalculate cost and profit
         cost_ratio = random.uniform(0.60, 0.80)
-        new_order["Cost"] = round(new_order["Revenue"] * cost_ratio, 2)
-        new_order["Profit"] = round(new_order["Revenue"] - new_order["Cost"], 2)
+        cost = round(abs(revenue) * cost_ratio, 2)
+        new_order["Cost"] = cost
+        new_order["Profit"] = round(revenue - cost, 2)
 
         # New customer occasionally
         if random.random() < 0.20:

@@ -5,7 +5,17 @@ import plotly.graph_objects as go
 import requests
 import os
 import sys
+import sqlite3
+import statistics
 from datetime import date, datetime, timedelta
+
+# Project root path
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+from database.init_db import ensure_database, is_database_initialized, DB_PATH
+from src.live_data_generator import generate_single_order, get_template_df
 
 # ============================================================
 # PAGE CONFIGURATION
@@ -23,11 +33,19 @@ st.set_page_config(
 # API CONFIGURATION
 # ============================================================
 
-# Auto-detect local vs deployed URL
-DEFAULT_API_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+# Auto-detect local vs deployed URL (supports Streamlit Secrets)
+default_api_url = "http://127.0.0.1:8000"
+try:
+    if hasattr(st, "secrets") and "API_BASE_URL" in st.secrets:
+        default_api_url = st.secrets["API_BASE_URL"]
+except Exception:
+    pass
+
+if not default_api_url or default_api_url == "http://127.0.0.1:8000":
+    default_api_url = os.getenv("API_BASE_URL", "https://ai-kpi-monitor.onrender.com" if not os.path.exists(os.path.join(BASE_DIR, "venv")) else "http://127.0.0.1:8000")
 
 if "api_url" not in st.session_state:
-    st.session_state["api_url"] = DEFAULT_API_URL
+    st.session_state["api_url"] = default_api_url
 
 API_BASE_URL = st.session_state["api_url"].rstrip("/")
 
@@ -532,15 +550,255 @@ def prepare_dataframe(data):
 
 
 # ============================================================
-# API CALL HELPERS
+# DUAL-ENGINE QUERY HELPERS (FastAPI HTTP + Direct SQLite WAL Fallback)
 # ============================================================
+
+def get_local_db_summary(start_date=None, end_date=None, regions=None, categories=None, channels=None):
+    """Direct high-speed SQLite WAL query engine (works even when FastAPI is offline or on Streamlit Cloud)."""
+    try:
+        ensure_database(verbose=False)
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL;")
+
+        where_clauses = ["1=1"]
+        params = []
+        if start_date:
+            where_clauses.append("Order_Date >= ?")
+            params.append(f"{start_date} 00:00:00")
+        if end_date:
+            where_clauses.append("Order_Date <= ?")
+            params.append(f"{end_date} 23:59:59")
+        if regions:
+            ph = ",".join(["?"] * len(regions))
+            where_clauses.append(f"Region IN ({ph})")
+            params.extend(regions)
+        if categories:
+            ph = ",".join(["?"] * len(categories))
+            where_clauses.append(f"Category IN ({ph})")
+            params.extend(categories)
+        if channels:
+            ph = ",".join(["?"] * len(channels))
+            where_clauses.append(f"Sales_Channel IN ({ph})")
+            params.extend(channels)
+
+        where_sql = " AND ".join(where_clauses)
+        cur = conn.cursor()
+
+        # Total records
+        cur.execute(f"SELECT COUNT(*) FROM sales WHERE {where_sql}", params)
+        total_monitored = cur.fetchone()[0] or 0
+
+        # KPIs
+        cur.execute(f"""
+            SELECT 
+                COALESCE(SUM(Revenue), 0),
+                COUNT(Order_ID),
+                COUNT(DISTINCT Customer_ID),
+                COALESCE(AVG(Revenue), 0),
+                COALESCE(SUM(Profit), 0)
+            FROM sales
+            WHERE {where_sql}
+        """, params)
+        row = cur.fetchone()
+        revenue = float(row[0] or 0)
+        orders = int(row[1] or 0)
+        customers = int(row[2] or 0)
+        aov = float(row[3] or 0)
+        profit = float(row[4] or 0)
+        profit_margin = round((profit / revenue * 100), 2) if revenue > 0 else 0.0
+
+        # Monthly trend
+        cur.execute(f"""
+            SELECT 
+                strftime('%Y-%m', Order_Date) as Month,
+                SUM(Revenue) as Revenue,
+                SUM(Profit) as Profit
+            FROM sales
+            WHERE {where_sql}
+            GROUP BY Month
+            ORDER BY Month ASC
+        """, params)
+        monthly_trend = [{"Month": r[0], "Revenue": float(r[1] or 0), "Profit": float(r[2] or 0)} for r in cur.fetchall()]
+
+        # Region breakdown
+        cur.execute(f"""
+            SELECT Region, SUM(Revenue) as Revenue
+            FROM sales
+            WHERE {where_sql}
+            GROUP BY Region
+            ORDER BY Revenue DESC
+        """, params)
+        region_breakdown = [{"Region": r[0], "Revenue": float(r[1] or 0)} for r in cur.fetchall()]
+
+        # Category breakdown
+        cur.execute(f"""
+            SELECT Category, SUM(Revenue) as Revenue
+            FROM sales
+            WHERE {where_sql}
+            GROUP BY Category
+            ORDER BY Revenue DESC
+        """, params)
+        category_breakdown = [{"Category": r[0], "Revenue": float(r[1] or 0)} for r in cur.fetchall()]
+
+        # Channel breakdown
+        cur.execute(f"""
+            SELECT Sales_Channel, SUM(Revenue) as Revenue
+            FROM sales
+            WHERE {where_sql}
+            GROUP BY Sales_Channel
+        """, params)
+        channel_breakdown = [{"Sales_Channel": r[0], "Revenue": float(r[1] or 0)} for r in cur.fetchall()]
+
+        # Top products
+        cur.execute(f"""
+            SELECT Product, SUM(Revenue) as Revenue, COUNT(*) as Orders
+            FROM sales
+            WHERE {where_sql}
+            GROUP BY Product
+            ORDER BY Revenue DESC
+            LIMIT 5
+        """, params)
+        top_products = [{"Product": r[0], "Revenue": float(r[1] or 0), "Orders": int(r[2] or 0)} for r in cur.fetchall()]
+
+        conn.close()
+        return {
+            "status": "success",
+            "total_monitored": total_monitored,
+            "engine": "Direct SQLite Engine",
+            "kpis": {
+                "revenue": revenue,
+                "orders": orders,
+                "customers": customers,
+                "average_order_value": aov,
+                "profit": profit,
+                "profit_margin": profit_margin
+            },
+            "monthly_trend": monthly_trend,
+            "region_breakdown": region_breakdown,
+            "category_breakdown": category_breakdown,
+            "channel_breakdown": channel_breakdown,
+            "top_products": top_products
+        }
+    except Exception as e:
+        print(f"Local DB query error: {e}", flush=True)
+        return None
+
+
+def get_local_db_anomalies(limit=10):
+    try:
+        ensure_database(verbose=False)
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        cur = conn.cursor()
+
+        cur.execute("SELECT Revenue, Quantity FROM sales WHERE Revenue IS NOT NULL")
+        rows = cur.fetchall()
+        revs = [float(r[0]) for r in rows if r[0] is not None]
+        qtys = [float(r[1]) for r in rows if r[1] is not None]
+
+        rev_mean = statistics.mean(revs) if revs else 0
+        rev_std = statistics.stdev(revs) if len(revs) > 1 else 0
+        qty_mean = statistics.mean(qtys) if qtys else 0
+        qty_std = statistics.stdev(qtys) if len(qtys) > 1 else 0
+
+        cur.execute("""
+            SELECT Order_ID, Order_Date, Customer_Name, Product, Region, Revenue, Quantity, Discount, Sales_Channel, Anomaly
+            FROM sales
+            WHERE Anomaly = 'Anomaly'
+            ORDER BY Order_ID DESC
+            LIMIT ?
+        """, (limit,))
+        anom_rows = cur.fetchall()
+
+        data = []
+        critical = 0
+        high = 0
+        medium = 0
+
+        for r in anom_rows:
+            order_id, order_date, cust, prod, reg, rev, qty, disc, chan, anom = r
+            rev = float(rev or 0)
+            qty = float(qty or 0)
+
+            reasons = []
+            if rev_std > 0 and abs(rev - rev_mean) > (3 * rev_std):
+                reasons.append("Extremely unusual revenue value")
+            if qty_std > 0 and abs(qty - qty_mean) > (3 * qty_std):
+                reasons.append("Extremely unusual order quantity")
+            if rev < 0:
+                reasons.append("Negative revenue transaction")
+            if not reasons:
+                reasons.append("Statistical deviation from normal sales pattern")
+
+            if len(reasons) >= 2 or rev < 0:
+                sev = "Critical"
+                critical += 1
+            elif len(reasons) == 1:
+                sev = "High"
+                high += 1
+            else:
+                sev = "Medium"
+                medium += 1
+
+            data.append({
+                "Order_ID": order_id,
+                "Order_Date": order_date,
+                "Customer_Name": cust,
+                "Product": prod,
+                "Region": reg,
+                "Revenue": rev,
+                "Quantity": qty,
+                "Discount": disc,
+                "Sales_Channel": chan,
+                "Anomaly": anom,
+                "Severity": sev,
+                "Anomaly_Reason": " + ".join(reasons)
+            })
+
+        conn.close()
+        return {
+            "status": "success",
+            "count": len(data),
+            "critical": critical,
+            "high": high,
+            "medium": medium,
+            "data": data
+        }
+    except Exception as e:
+        print(f"Local anomalies query error: {e}", flush=True)
+        return {"data": [], "critical": 0, "high": 0, "medium": 0}
+
 
 def get_filter_options():
     try:
-        response = http.get(FILTER_OPTIONS_API, timeout=5)
-        response.raise_for_status()
-        return response.json()
+        response = http.get(FILTER_OPTIONS_API, timeout=3)
+        if response.status_code == 200:
+            return response.json()
     except Exception:
+        pass
+
+    try:
+        ensure_database(verbose=False)
+        conn = sqlite3.connect(DB_PATH, timeout=5)
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT Region FROM sales WHERE Region IS NOT NULL ORDER BY Region")
+        regions = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT Category FROM sales WHERE Category IS NOT NULL ORDER BY Category")
+        categories = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT Sales_Channel FROM sales WHERE Sales_Channel IS NOT NULL ORDER BY Sales_Channel")
+        channels = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT MIN(DATE(Order_Date)), MAX(DATE(Order_Date)), COUNT(*) FROM sales")
+        min_d, max_d, cnt = cur.fetchone()
+        conn.close()
+        return {
+            "regions": regions or ["Central", "East", "International", "North", "North-East", "North-West", "South", "South-East", "South-West", "West"],
+            "categories": categories or ["Appliances", "Electronics", "Furniture", "Office Supplies"],
+            "channels": channels or ["Offline", "Online"],
+            "min_date": str(min_d or "2023-08-07"),
+            "max_date": str(max_d or datetime.now().strftime("%Y-%m-%d")),
+            "total_records": cnt or 50000
+        }
+    except Exception as e:
+        print(f"Filter options fallback error: {e}", flush=True)
         return {
             "regions": ["Central", "East", "International", "North", "North-East", "North-West", "South", "South-East", "South-West", "West"],
             "categories": ["Appliances", "Electronics", "Furniture", "Office Supplies"],
@@ -564,42 +822,72 @@ def get_dashboard_summary(start_date=None, end_date=None, regions=None, categori
     if channels:
         params["channels"] = ",".join(channels)
 
+    # 1. Attempt FastAPI HTTP Endpoint
     try:
-        response = http.get(SUMMARY_API, params=params, timeout=5)
-        response.raise_for_status()
-        return response.json()
-    except Exception:
-        return None
+        response = http.get(SUMMARY_API, params=params, timeout=3)
+        if response.status_code == 200:
+            data = response.json()
+            data["engine"] = f"FastAPI Server ({API_BASE_URL})"
+            return data
+    except Exception as e:
+        print(f"FastAPI unreachable at {SUMMARY_API}: {e}. Switching to direct SQLite engine.", flush=True)
+
+    # 2. Seamless Direct SQLite WAL Engine Fallback
+    return get_local_db_summary(start_date, end_date, regions, categories, channels)
 
 
 def get_latest_orders(limit=10):
     try:
-        response = http.get(LATEST_API, params={"limit": limit}, timeout=4)
-        response.raise_for_status()
-        payload = response.json()
-        return prepare_dataframe(payload.get("data", []))
+        response = http.get(LATEST_API, params={"limit": limit}, timeout=3)
+        if response.status_code == 200:
+            payload = response.json()
+            return prepare_dataframe(payload.get("data", []))
     except Exception:
+        pass
+
+    try:
+        ensure_database(verbose=False)
+        conn = sqlite3.connect(DB_PATH, timeout=5)
+        df = pd.read_sql_query(f"SELECT * FROM sales ORDER BY Order_ID DESC LIMIT {limit}", conn)
+        conn.close()
+        return prepare_dataframe(df.to_dict(orient="records"))
+    except Exception as e:
+        print(f"Latest orders fallback error: {e}", flush=True)
         return pd.DataFrame()
 
 
 def get_latest_order():
     try:
         response = http.get(LATEST_ONE_API, timeout=3)
-        response.raise_for_status()
-        payload = response.json()
-        return payload.get("data")
+        if response.status_code == 200:
+            payload = response.json()
+            return payload.get("data")
     except Exception:
-        return None
+        pass
+
+    try:
+        ensure_database(verbose=False)
+        conn = sqlite3.connect(DB_PATH, timeout=5)
+        cur = conn.cursor()
+        cur.execute("SELECT Order_ID, Order_Date, Customer_Name, Product, Revenue FROM sales ORDER BY Order_ID DESC LIMIT 1")
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            return {"Order_ID": row[0], "Order_Date": row[1], "Customer_Name": row[2], "Product": row[3], "Revenue": row[4]}
+    except Exception:
+        pass
+    return None
 
 
 def get_anomalies(limit=10):
     try:
-        response = http.get(ANOMALY_API, params={"limit": limit}, timeout=4)
-        response.raise_for_status()
-        payload = response.json()
-        return payload
-    except Exception:
-        return {"data": [], "critical": 0, "high": 0, "medium": 0}
+        response = http.get(ANOMALY_API, params={"limit": limit}, timeout=3)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        print(f"FastAPI anomalies unreachable at {ANOMALY_API}: {e}. Switching to direct SQLite engine.", flush=True)
+
+    return get_local_db_anomalies(limit=limit)
 
 
 def get_ai_insights(start_date=None, end_date=None, regions=None, categories=None, channels=None, use_gemini=False):
@@ -616,20 +904,39 @@ def get_ai_insights(start_date=None, end_date=None, regions=None, categories=Non
         params["channels"] = ",".join(channels)
 
     try:
-        response = http.get(AI_INSIGHTS_API, params=params, timeout=10)
-        response.raise_for_status()
-        payload = response.json()
-        return payload.get("insights", {})
+        response = http.get(AI_INSIGHTS_API, params=params, timeout=5)
+        if response.status_code == 200:
+            payload = response.json()
+            return payload.get("insights", {})
     except Exception:
+        pass
+
+    try:
+        from src.ai_summary import generate_executive_insights
+        ensure_database(verbose=False)
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        df = pd.read_sql_query("SELECT * FROM sales ORDER BY Order_Date ASC", conn)
+        conn.close()
+        return generate_executive_insights(df=df, use_gemini=False)
+    except Exception as e:
+        print(f"AI insights fallback error: {e}", flush=True)
         return None
 
 
 def trigger_live_order_api(count=1):
     try:
-        response = http.post(f"{TRIGGER_API}?count={count}", timeout=4)
-        response.raise_for_status()
-        return response.json()
+        response = http.post(f"{TRIGGER_API}?count={count}", timeout=3)
+        if response.status_code == 200:
+            return response.json()
     except Exception:
+        pass
+
+    try:
+        template_df = get_template_df()
+        orders = [generate_single_order(template_df=template_df) for _ in range(count)]
+        return {"status": "success", "count": len(orders), "orders": orders}
+    except Exception as e:
+        print(f"Direct live order injection error: {e}", flush=True)
         return None
 
 
@@ -721,6 +1028,17 @@ with st.sidebar:
     selected_channels = st.multiselect("Channels", channels_list, default=channels_list)
 
     st.divider()
+
+    with st.expander("🔗 Backend Engine Settings", expanded=False):
+        api_input = st.text_input(
+            "FastAPI Server URL",
+            value=st.session_state.get("api_url", default_api_url),
+            help="For local: http://127.0.0.1:8000. For cloud: enter your deployed Render URL."
+        )
+        if api_input != st.session_state.get("api_url"):
+            st.session_state["api_url"] = api_input.rstrip("/")
+            st.rerun()
+
     st.markdown(
         f"""
         <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px; font-size:0.78rem; color:#64748b;">
@@ -783,11 +1101,12 @@ st.markdown(
 def render_live_kpi_section():
     summary = get_dashboard_summary(**filter_kwargs)
     if not summary or summary.get("status") != "success":
-        st.warning("⚠️ Synchronizing with backend API stream...")
+        st.warning(f"⚠️ Synchronizing with backend API stream ({API_BASE_URL})...")
         return
 
     kpis = summary.get("kpis", {})
     total_monitored = summary.get("total_monitored", 0)
+    engine_name = summary.get("engine", "Operational (Online)")
     revenue = kpis.get("revenue", 0.0)
     orders = kpis.get("orders", 0)
     customers = kpis.get("customers", 0)
@@ -804,7 +1123,7 @@ def render_live_kpi_section():
                 <div class="sys-icon-box">{ICONS['server']}</div>
                 <div>
                     <div class="sys-label">System Health</div>
-                    <div class="sys-val" style="color:#059669;">Operational (Online)</div>
+                    <div class="sys-val" style="color:#059669; font-size:0.96rem;">{engine_name}</div>
                 </div>
             </div>
             """,
